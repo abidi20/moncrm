@@ -1,0 +1,22 @@
+{
+  "name": "backend",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "index.js",
+  "directories": {
+    "lib": "lib"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "schema": "node scripts/create-schema-mysql.js",
+    "seed": "node scripts/seed.js",
+    "dev": "node index.js"
+  },
+  "keywords": [],
+  "author": "Expert Info",
+  "license": "ISC",
+  "description": "SICCRM Backend MySQL Local",
+  "dependencies": {
+    "mysql2": "^3.11.0"
+  }
+}
