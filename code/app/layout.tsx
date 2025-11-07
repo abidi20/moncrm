@@ -27,27 +27,15 @@ export default function RootLayout({
       <head />
       <body className={`${inter.variable} font-sans min-h-screen bg-background text-foreground`}>
         
-        {/* === FOND PLEIN ÉCRAN === */}
-        <div className="fixed inset-0 -z-10">
-          <div className="absolute inset-0 bg-gradient-to-b from-black/60 via-black/40 to-black/60" />
-          <div
-            className="absolute inset-0 bg-cover bg-center bg-no-repeat"
-            style={{ backgroundImage: "url('/fond.jpg')" }}
-          />
-        </div>
+        {/* === PLUS DE FOND ICI === */}
         
-        {/* === BOUTON DARK MODE (haut-droit, petit) === */}
+        {/* Bouton Dark Mode (visible partout) */}
         <div className="fixed top-6 right-6 z-50">
           <ThemeToggle />
         </div>
-        
-        {/* === CONTENU ÉTENDU SUR TOUTE LA LARGEUR === */}
-        <main className="relative flex min-h-screen w-full h-full items-center justify-center">  {/* Supprimé p-4, ajouté h-full */}
-          <div className="w-full space-y-8 text-center">  {/* w-full sans max-w */}
-            {children}
-          </div>
-        </main>
-        
+
+        {children}
+
         <Toaster />
         <Analytics />
       </body>
