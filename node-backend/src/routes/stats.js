@@ -1,34 +1,30 @@
-// api/stats.js
-import express from "express"
-import mysql from "mysql2/promise"
+// src/routes/stats.js
+const express = require('express');
+const router = express.Router();
+const { query } = require('../db');
 
-const router = express.Router()
-
-// connexion à la base
-const db = await mysql.createConnection({
-  host: "localhost",
-  user: "root",
-  password: "ton_mot_de_passe",
-  database: "ta_base",
-})
-
-router.get("/stats", async (req, res) => {
+router.get('/stats', async (_req, res) => {
   try {
-    const [contacts] = await db.query("SELECT COUNT(*) AS total FROM contacts")
-    const [interactions] = await db.query("SELECT COUNT(*) AS total FROM interactions WHERE MONTH(date) = MONTH(NOW())")
-    const [opportunites] = await db.query("SELECT COUNT(*) AS total FROM opportunites WHERE statut = 'active'")
-    const tauxConversion = 18.2 // tu peux le calculer depuis ta base si tu veux
+    const { rows: contacts } = await query('SELECT COUNT(*) AS total FROM contacts');
+    const { rows: interactions } = await query(
+      "SELECT COUNT(*) AS total FROM interactions WHERE MONTH(date) = MONTH(NOW())"
+    );
+    const { rows: opportunites } = await query(
+      "SELECT COUNT(*) AS total FROM opportunites WHERE statut = 'active'"
+    );
+
+    const tauxConversion = 18.2;
 
     res.json({
-      totalContacts: contacts[0].total,
-      interactionsMois: interactions[0].total,
-      opportunitesActives: opportunites[0].total,
+      totalContacts: contacts[0]?.total ?? 0,
+      interactionsMois: interactions[0]?.total ?? 0,
+      opportunitesActives: opportunites[0]?.total ?? 0,
       tauxConversion,
-    })
+    });
   } catch (err) {
-    console.error(err)
-    res.status(500).json({ error: "Erreur lors de la récupération des statistiques" })
+    console.error('Erreur /api/stats :', err);
+    res.status(500).json({ error: 'Erreur lors de la récupération des statistiques' });
   }
-})
+});
 
-export default router
+module.exports = router;

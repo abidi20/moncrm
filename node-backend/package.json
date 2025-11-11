@@ -1,22 +1,19 @@
 {
-  "name": "backend",
+  "name": "siccrm-backend-fixed",
   "version": "1.0.0",
-  "type": "module",
-  "main": "index.js",
-  "directories": {
-    "lib": "lib"
-  },
+  "description": "SICCRM Backend (CommonJS, MySQL)",
+  "main": "src/server.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
-    "schema": "node scripts/create-schema-mysql.js",
-    "seed": "node scripts/seed.js",
-    "dev": "node index.js"
+    "dev": "node src/server.js",
+    "start": "node src/server.js"
   },
-  "keywords": [],
-  "author": "Expert Info",
-  "license": "ISC",
-  "description": "SICCRM Backend MySQL Local",
   "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "cors": "^2.8.5",
+    "dotenv": "^17.2.3",
+    "express": "^4.19.2",
+    "express-rate-limit": "^6.11.2",
+    "jsonwebtoken": "^9.0.2",
     "mysql2": "^3.11.0"
   }
 }

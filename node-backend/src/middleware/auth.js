@@ -1,25 +1,36 @@
-import jwt from 'jsonwebtoken';
-import { config } from 'dotenv';
-config();
+// src/middleware/auth.js
+const jwt = require('jsonwebtoken');
 
-export function signToken(payload, opts = {}) {
-  return jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '7d', ...opts });
+function signToken(payload, opts = {}) {
+  return jwt.sign(payload, process.env.JWT_SECRET, {
+    expiresIn: process.env.JWT_EXPIRES || '1d',
+    ...opts,
+  });
 }
 
-export function requireAuth(req, res, next) {
-  const auth = req.headers.authorization || '';
-  const token = auth.startsWith('Bearer ') ? auth.slice(7) : null;
-  if (!token) return res.status(401).json({ error: 'Missing token' });
-  try {
-    const payload = jwt.verify(token, process.env.JWT_SECRET);
-    req.user = payload;
-    next();
-  } catch (e) {
-    return res.status(401).json({ error: 'Invalid token' });
+function decodeJWT(req, _res, next) {
+  const header = req.headers.authorization || '';
+  if (header.startsWith('Bearer ')) {
+    const token = header.slice(7);
+    try {
+      req.user = jwt.verify(token, process.env.JWT_SECRET);
+    } catch (_e) {
+      req.user = undefined;
+    }
   }
+  next();
 }
 
-export function requireAdmin(req, res, next) {
-  if (req.user?.roles?.includes('admin')) return next();
-  return res.status(403).json({ error: 'Admin only' });
+function requireAuth(req, res, next) {
+  if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
+  next();
 }
+
+function requireAdmin(req, res, next) {
+  if (!req.user || !(req.user.roles || []).includes('admin')) {
+    return res.status(403).json({ error: 'Admin required' });
+  }
+  next();
+}
+
+module.exports = { signToken, decodeJWT, requireAuth, requireAdmin };

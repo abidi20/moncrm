@@ -1,71 +1,108 @@
-"use client"
+"use client";
 
-import type React from "react"
-
-import { useEffect, useState } from "react"
-import { getCurrentUser, hasPermission } from "@/lib/auth"
-import { Card, CardContent } from "@/components/ui/card"
-import { Shield, AlertTriangle } from "lucide-react"
-import { Button } from "@/components/ui/button"
+import type React from "react";
+import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation"; // OU import { useRouter } from "next/navigation" si App Router
+import { getCurrentUser } from "@/lib/auth";
+import { Card, CardContent } from "@/components/ui/card";
+import { Shield, AlertTriangle, Loader2 } from "lucide-react";
+import { Button } from "@/components/ui/button";
 
 interface ProtectedRouteProps {
-  children: React.ReactNode
-  requiredRole: "admin" | "user"
-  fallbackMessage?: string
+  children: React.ReactNode;
+  requiredRole?: "admin" | "client"; // maintenant optionnel si tu veux juste auth
+  fallbackMessage?: string;
+  redirectTo?: string; // ex: "/login" ou "/"
 }
 
-export function ProtectedRoute({ children, requiredRole, fallbackMessage }: ProtectedRouteProps) {
-  const [user, setUser] = useState(null)
-  const [isLoading, setIsLoading] = useState(true)
+export function ProtectedRoute({
+  children,
+  requiredRole,
+  fallbackMessage,
+  redirectTo = "/",
+}: ProtectedRouteProps) {
+  const [user, setUser] = useState<any>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const router = useRouter();
 
   useEffect(() => {
-    const currentUser = getCurrentUser()
-    setUser(currentUser)
-    setIsLoading(false)
-
-    // Redirect to login if not authenticated
+    const currentUser = getCurrentUser();
+    
     if (!currentUser) {
-      window.location.href = "/"
-      return
+      // Redirection propre sans bloquer le rendu
+      router.push(redirectTo);
+      return;
     }
-  }, [])
 
+    setUser(currentUser);
+    setIsLoading(false);
+  }, [router, redirectTo]);
+
+  // Chargement
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center min-h-[400px]">
-        <div className="h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+      <div className="flex items-center justify-center min-h-screen">
+        <Loader2 className="h-10 w-10 animate-spin text-primary" />
       </div>
-    )
+    );
   }
 
+  // Pas connecté → redirection déjà faite
   if (!user) {
-    return null // Will redirect to login
+    return null;
   }
 
-  if (!hasPermission(requiredRole)) {
+  // Vérification du rôle
+  const userRoles = user.roles || [];
+  const hasRequiredRole = !requiredRole || userRoles.includes(requiredRole);
+
+  if (!hasRequiredRole) {
     return (
-      <div className="flex items-center justify-center min-h-[400px] p-6">
-        <Card className="max-w-md w-full">
-          <CardContent className="pt-6 text-center">
-            <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-destructive/10 flex items-center justify-center">
-              <AlertTriangle className="w-8 h-8 text-destructive" />
+      <div className="flex items-center justify-center min-h-screen p-6 bg-background">
+        <Card className="max-w-md w-full shadow-lg">
+          <CardContent className="pt-8 text-center">
+            <div className="w-20 h-20 mx-auto mb-6 rounded-full bg-destructive/15 flex items-center justify-center">
+              <AlertTriangle className="w-10 h-10 text-destructive" />
             </div>
-            <h2 className="text-xl font-semibold mb-2">Accès restreint</h2>
-            <p className="text-muted-foreground mb-4">
-              {fallbackMessage || "Cette section est réservée aux administrateurs."}
+            <h2 className="text-2xl font-bold mb-3">Accès refusé</h2>
+            <p className="text-muted-foreground mb-6 px-4">
+              {fallbackMessage || 
+                (requiredRole === "admin" 
+                  ? "Cette page est réservée aux administrateurs." 
+                  : "Vous n'avez pas les permissions nécessaires.")
+              }
             </p>
-            <div className="flex items-center justify-center gap-2 text-sm text-muted-foreground mb-4">
-              <Shield className="w-4 h-4" />
-              <span>Connecté en tant que : {user.role === "admin" ? "Administrateur" : "Utilisateur Standard"}</span>
+
+            <div className="flex items-center justify-center gap-3 text-sm text-muted-foreground mb-6 bg-muted/50 py-3 px-5 rounded-lg">
+              <Shield className="w-5 h-5" />
+              <span>
+                Connecté comme : <strong>{user.name || user.email}</strong>
+                <br />
+                Rôles : <strong>{userRoles.join(", ") || "aucun"}</strong>
+              </span>
             </div>
-            <Button variant="outline" onClick={() => (window.location.href = "/dashboard")} className="w-full">
-              Retour au tableau de bord
-            </Button>
+
+            <div className="flex gap-3">
+              <Button 
+                variant="default" 
+                onClick={() => router.push("/dashboard")}
+                className="flex-1"
+              >
+                Tableau de bord
+              </Button>
+              <Button 
+                variant="outline" 
+                onClick={() => router.push("/")}
+              >
+                Accueil
+              </Button>
+            </div>
           </CardContent>
         </Card>
       </div>
-    )
+    );
   }
 
-  return <>{children}</>
+  // Tout bon → on affiche le contenu
+  return <>{children}</>;
 }
