@@ -1,14 +1,12 @@
 "use client"
 
-import type React from "react"
-
 import { useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { useToast } from "@/hooks/use-toast"
 import { Eye, EyeOff, LogIn } from "lucide-react"
-import { DEMO_USERS, setCurrentUser } from "@/lib/auth"
+import { login as loginUser, getCurrentUser } from "@/lib/auth" // 👈 utilise ton backend
 
 export function LoginForm() {
   const [email, setEmail] = useState("")
@@ -20,64 +18,35 @@ export function LoginForm() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setIsLoading(true)
-
-    setTimeout(() => {
-      const user = DEMO_USERS[email]
-
-      if (
-        user &&
-        ((email === "admin@minicrm.com" && password === "admin123") ||
-          (email === "user@minicrm.com" && password === "user123"))
-      ) {
-        setCurrentUser(user)
-        toast({
-          title: "Connexion réussie",
-          description: `Bienvenue ${user.name} !`,
-        })
-        window.location.href = "/dashboard"
-      } else {
-        toast({
-          title: "Erreur de connexion",
-          description: "Email ou mot de passe incorrect",
-          variant: "destructive",
-        })
-      }
+    try {
+      await loginUser(email, password) // POST /api/auth/login + stocke token/user
+      const u = getCurrentUser()
+      toast({ title: "Connexion réussie", description: `Bienvenue ${u?.name || ""} !` })
+      window.location.href = "/dashboard"
+    } catch (err: any) {
+      const msg = err?.response?.data?.error || "Email ou mot de passe incorrect"
+      toast({ title: "Erreur de connexion", description: msg, variant: "destructive" })
+    } finally {
       setIsLoading(false)
-    }, 1000)
+    }
   }
 
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
       <div className="space-y-2">
         <Label htmlFor="email">Email</Label>
-        <Input
-          id="email"
-          type="email"
-          placeholder="votre@email.com"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-          required
-        />
+        <Input id="email" type="email" placeholder="votre@email.com"
+          value={email} onChange={(e) => setEmail(e.target.value)} required />
       </div>
 
       <div className="space-y-2">
         <Label htmlFor="password">Mot de passe</Label>
         <div className="relative">
-          <Input
-            id="password"
-            type={showPassword ? "text" : "password"}
-            placeholder="••••••••"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            required
-          />
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
+          <Input id="password" type={showPassword ? "text" : "password"} placeholder="••••••••"
+            value={password} onChange={(e) => setPassword(e.target.value)} required />
+          <Button type="button" variant="ghost" size="sm"
             className="absolute right-0 top-0 h-full px-3 py-2 hover:bg-transparent"
-            onClick={() => setShowPassword(!showPassword)}
-          >
+            onClick={() => setShowPassword(!showPassword)}>
             {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
           </Button>
         </div>
@@ -96,16 +65,6 @@ export function LoginForm() {
           </div>
         )}
       </Button>
-
-      <div className="text-sm text-muted-foreground text-center mt-4">
-        <p className="mb-1">Comptes de démonstration :</p>
-        <p>
-          <strong>Admin :</strong> admin@minicrm.com / admin123
-        </p>
-        <p>
-          <strong>Utilisateur :</strong> user@minicrm.com / user123
-        </p>
-      </div>
     </form>
   )
 }

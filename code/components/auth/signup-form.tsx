@@ -1,102 +1,63 @@
-"use client"
+"use client";
 
-import type React from "react"
-import { useState } from "react"
-import Link from "next/link"
-import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
-import { useToast } from "@/hooks/use-toast"
-import { Eye, EyeOff, UserPlus } from "lucide-react"
-import { createClient } from "@/lib/supabase"
+import { useState } from "react";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { useToast } from "@/hooks/use-toast";
+import { Eye, EyeOff, UserPlus } from "lucide-react";
+
+// ✅ importe la fonction register exposée par lib/auth (qui utilise lib/api)
+import { register as registerUser } from "@/lib/auth";
 
 export function SignupForm() {
-  const [email, setEmail] = useState("")
-  const [password, setPassword] = useState("")
-  const [confirmPassword, setConfirmPassword] = useState("")
-  const [name, setName] = useState("")
-  const [showPassword, setShowPassword] = useState(false)
-  const [showConfirmPassword, setShowConfirmPassword] = useState(false)
-  const [isLoading, setIsLoading] = useState(false)
-  const { toast } = useToast()
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [name, setName] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
+  const { toast } = useToast();
+  const router = useRouter();
 
   const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setIsLoading(true)
+    e.preventDefault();
+    if (isLoading) return;
+    setIsLoading(true);
 
-    // Validation
+    // Validations rapides
     if (!name || !email || !password || !confirmPassword) {
-      toast({
-        title: "Erreur",
-        description: "Tous les champs sont obligatoires",
-        variant: "destructive",
-      })
-      setIsLoading(false)
-      return
+      toast({ title: "Erreur", description: "Tous les champs sont obligatoires", variant: "destructive" });
+      setIsLoading(false);
+      return;
     }
-
     if (password !== confirmPassword) {
-      toast({
-        title: "Erreur",
-        description: "Les mots de passe ne correspondent pas",
-        variant: "destructive",
-      })
-      setIsLoading(false)
-      return
+      toast({ title: "Erreur", description: "Les mots de passe ne correspondent pas", variant: "destructive" });
+      setIsLoading(false);
+      return;
     }
-
-    if (password.length < 6) {
-      toast({
-        title: "Erreur",
-        description: "Le mot de passe doit contenir au moins 6 caractères",
-        variant: "destructive",
-      })
-      setIsLoading(false)
-      return
+    if (password.length < 8) {
+      toast({ title: "Erreur", description: "Mot de passe ≥ 8 caractères", variant: "destructive" });
+      setIsLoading(false);
+      return;
     }
 
     try {
-      const supabase = createClient()
+      // 👉 appelle POST /api/auth/register via lib/auth (qui stocke token + user)
+      await registerUser(name, email, password);
 
-      // Sign up with Supabase Auth
-      const { data, error } = await supabase.auth.signUp({
-        email,
-        password,
-        options: {
-          data: {
-            name,
-          },
-          emailRedirectTo: `${process.env.NEXT_PUBLIC_DEV_SUPABASE_REDIRECT_URL || window.location.origin}/auth/callback`,
-        },
-      })
-
-      if (error) {
-        toast({
-          title: "Erreur d'inscription",
-          description: error.message,
-          variant: "destructive",
-        })
-      } else {
-        toast({
-          title: "Inscription réussie",
-          description: "Veuillez vérifier votre email pour confirmer votre compte",
-        })
-        // Reset form
-        setEmail("")
-        setPassword("")
-        setConfirmPassword("")
-        setName("")
-      }
-    } catch (error) {
-      toast({
-        title: "Erreur",
-        description: "Une erreur est survenue lors de l'inscription",
-        variant: "destructive",
-      })
+      toast({ title: "Inscription réussie", description: "Bienvenue !" });
+      router.replace("/dashboard");
+    } catch (err: any) {
+      const msg = err?.response?.data?.error || err?.message || "Erreur lors de l'inscription";
+      toast({ title: "Erreur d'inscription", description: msg, variant: "destructive" });
+    } finally {
+      setIsLoading(false);
     }
-
-    setIsLoading(false)
-  }
+  };
 
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
@@ -117,7 +78,7 @@ export function SignupForm() {
         <Input
           id="email"
           type="email"
-          placeholder="votre@email.com"
+          placeholder="vous@email.com"
           value={email}
           onChange={(e) => setEmail(e.target.value)}
           required
@@ -140,7 +101,7 @@ export function SignupForm() {
             variant="ghost"
             size="sm"
             className="absolute right-0 top-0 h-full px-3 py-2 hover:bg-transparent"
-            onClick={() => setShowPassword(!showPassword)}
+            onClick={() => setShowPassword((v) => !v)}
           >
             {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
           </Button>
@@ -163,7 +124,7 @@ export function SignupForm() {
             variant="ghost"
             size="sm"
             className="absolute right-0 top-0 h-full px-3 py-2 hover:bg-transparent"
-            onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+            onClick={() => setShowConfirmPassword((v) => !v)}
           >
             {showConfirmPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
           </Button>
@@ -193,5 +154,5 @@ export function SignupForm() {
         </p>
       </div>
     </form>
-  )
+  );
 }

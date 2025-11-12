@@ -1,64 +1,182 @@
-export interface User {
-  id: string
-  email: string
+// lib/auth.ts
+import { api } from "@/lib/api"
+
+export type User = {
+  id: number | string
   name: string
-  role: "admin" | "user"
-  phone?: string
-  department?: string
+  email: string
+  roles?: string[]
 }
 
-export const DEMO_USERS: Record<string, User> = {
-  "admin@minicrm.com": {
-    id: "1",
-    email: "admin@minicrm.com",
-    name: "Administrateur",
-    role: "admin",
-    phone: "+33 1 23 45 67 89",
-    department: "Direction",
-  },
-  "user@minicrm.com": {
-    id: "2",
-    email: "user@minicrm.com",
-    name: "Utilisateur Standard",
-    role: "user",
-    phone: "+33 1 98 76 54 32",
-    department: "Commercial",
-  },
+const TOKEN_KEY = "token"
+const USER_KEY = "currentUser"
+
+type JwtPayload = {
+  sub?: number | string
+  email?: string
+  roles?: string[]
+  exp?: number // secondes epoch
 }
 
+/* --- Utils --- */
+function isBrowser() {
+  return typeof window !== "undefined"
+}
+
+function b64urlDecode(str: string) {
+  // base64url -> base64
+  const s = str.replace(/-/g, "+").replace(/_/g, "/")
+  const pad = s.length % 4 === 2 ? "=="
+            : s.length % 4 === 3 ? "="
+            : ""
+  try {
+    return atob(s + pad)
+  } catch {
+    return ""
+  }
+}
+
+function decodeJwt<T = any>(token: string): T | null {
+  try {
+    const parts = token.split(".")
+    if (parts.length < 2) return null
+    const json = b64urlDecode(parts[1])
+    return JSON.parse(json) as T
+  } catch {
+    return null
+  }
+}
+
+function isExpired(payload?: JwtPayload | null) {
+  if (!payload?.exp) return false
+  const now = Math.floor(Date.now() / 1000)
+  return payload.exp <= now
+}
+
+/* --- Token & headers sync --- */
+function setAxiosAuthHeader(token: string | null) {
+  if (token) {
+    api.defaults.headers.common.Authorization = `Bearer ${token}`
+  } else {
+    delete api.defaults.headers.common.Authorization
+  }
+}
+
+export function getToken(): string | null {
+  if (!isBrowser()) return null
+  return localStorage.getItem(TOKEN_KEY)
+}
+
+export function setToken(token: string) {
+  if (!isBrowser()) return
+  localStorage.setItem(TOKEN_KEY, token)
+  setAxiosAuthHeader(token)
+}
+
+export function clearToken() {
+  if (!isBrowser()) return
+  localStorage.removeItem(TOKEN_KEY)
+  setAxiosAuthHeader(null)
+}
+
+/* --- User storage --- */
 export function getCurrentUser(): User | null {
-  if (typeof window === "undefined") return null
+  if (!isBrowser()) return null
 
-  const userData = localStorage.getItem("currentUser")
-  return userData ? JSON.parse(userData) : null
+  // 1) si stocké, on le renvoie
+  const raw = localStorage.getItem(USER_KEY)
+  if (raw) {
+    try {
+      return JSON.parse(raw) as User
+    } catch {
+      // fallthrough
+    }
+  }
+
+  // 2) sinon, on tente depuis le token
+  const token = getToken()
+  if (!token) return null
+
+  const payload = decodeJwt<JwtPayload>(token)
+  if (!payload || isExpired(payload)) {
+    // token périmé: nettoyage
+    logout()
+    return null
+  }
+
+  const user: User = {
+    id: payload.sub ?? "me",
+    name: payload.email?.split("@")[0] ?? "Utilisateur",
+    email: payload.email ?? "",
+    roles: payload.roles ?? [],
+  }
+  localStorage.setItem(USER_KEY, JSON.stringify(user))
+  return user
 }
 
-export function setCurrentUser(user: User): void {
-  localStorage.setItem("currentUser", JSON.stringify(user))
+export function setCurrentUser(user: User) {
+  if (!isBrowser()) return
+  localStorage.setItem(USER_KEY, JSON.stringify(user))
 }
 
-export function logout(): void {
-  localStorage.removeItem("currentUser")
+export function logout() {
+  if (!isBrowser()) return
+  clearToken()
+  localStorage.removeItem(USER_KEY)
+  // Optionnel: redirection
   window.location.href = "/"
 }
 
-export function hasPermission(requiredRole: "admin" | "user"): boolean {
-  const user = getCurrentUser()
-  if (!user) return false
+/* --- API helpers --- */
+export function getAuthHeader() {
+  const t = getToken()
+  return t ? { Authorization: `Bearer ${t}` } : {}
+}
 
-  if (requiredRole === "admin") {
-    return user.role === "admin"
+/**
+ * POST /api/auth/login { email, password }
+ * Attend { user, token } en réponse.
+ */
+export async function login(email: string, password: string): Promise<User> {
+  const { data } = await api.post("/auth/login", { email, password })
+  const token: string | undefined = data?.token
+  const user: User | undefined = data?.user
+  if (!token || !user) {
+    throw new Error("Réponse inattendue du serveur")
   }
 
-  return true // Les utilisateurs standard ont accès aux fonctionnalités de base
+  // Vérif expiration de manière défensive
+  const payload = decodeJwt<JwtPayload>(token)
+  if (isExpired(payload)) {
+    throw new Error("Jeton expiré")
+  }
+
+  setToken(token)
+  setCurrentUser(user)
+  return user
 }
 
-export function updateUser(updatedUser: User): void {
-  if (typeof window === "undefined") return
-
-  // Update the current user in localStorage
-  localStorage.setItem("currentUser", JSON.stringify(updatedUser))
-
-  // In a real app, this would make an API call to update the user in the database
-  console.log("[v0] User profile updated:", updatedUser)
+/**
+ * POST /api/auth/register { name, email, password }
+ * Certains backends renvoient uniquement { user } — on accepte les deux.
+ */
+export async function register(name: string, email: string, password: string): Promise<User> {
+  const { data } = await api.post("/auth/register", { name, email, password })
+  const token: string | undefined = data?.token
+  const user: User | undefined = data?.user
+  if (!user) {
+    throw new Error("Réponse inattendue du serveur")
+  }
+  if (token) setToken(token)
+  setCurrentUser(user)
+  return user
 }
+
+/* --- Roles --- */
+export function hasRole(role: string): boolean {
+  const u = getCurrentUser()
+  return !!u?.roles?.includes(role)
+}
+
+/* Initialise l’en-tête Axios si on recharge la page */
+setAxiosAuthHeader(getToken())

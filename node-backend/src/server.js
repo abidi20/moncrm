@@ -9,8 +9,11 @@ const userRoutes = require('./routes/users');
 const interactionsRoutes = require('./routes/interactions');
 const messagesRoutes = require('./routes/messages');
 const statsRoutes = require('./routes/stats');
+const contactsRoutes = require('./routes/contacts');
+const activitiesRoutes = require('./routes/activities');
 
 const app = express();
+
 app.set('trust proxy', 1);
 app.use(cors());
 app.use(express.json());
@@ -24,6 +27,8 @@ app.use('/api/users', userRoutes);
 app.use('/api/interactions', interactionsRoutes);
 app.use('/api', messagesRoutes);
 app.use('/api/stats', statsRoutes);
+app.use('/api/contacts', contactsRoutes);
+app.use('/api/activities', activitiesRoutes);
 
 app.use((_req, res) => res.status(404).json({ error: 'Not found' }));
 app.use((err, _req, res, _next) => {

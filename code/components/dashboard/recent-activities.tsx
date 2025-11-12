@@ -1,52 +1,37 @@
+"use client"
+
+import { useEffect, useState } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Phone, Mail, Calendar, MessageSquare } from "lucide-react"
+import { api } from "@/lib/api"
+import { useToast } from "@/hooks/use-toast"
 
-const activities = [
-  {
-    id: 1,
-    type: "call",
-    title: "Appel avec Marie Dubois",
-    description: "Discussion sur le projet de refonte du site web",
-    time: "Il y a 2 heures",
-    contact: "Marie Dubois",
-    status: "completed",
-    icon: Phone,
-  },
-  {
-    id: 2,
-    type: "email",
-    title: "Email envoyé à Jean Martin",
-    description: "Proposition commerciale pour le service premium",
-    time: "Il y a 4 heures",
-    contact: "Jean Martin",
-    status: "sent",
-    icon: Mail,
-  },
-  {
-    id: 3,
-    type: "meeting",
-    title: "Réunion planifiée",
-    description: "Présentation produit avec l'équipe de Sophie Laurent",
-    time: "Demain à 14h00",
-    contact: "Sophie Laurent",
-    status: "scheduled",
-    icon: Calendar,
-  },
-  {
-    id: 4,
-    type: "note",
-    title: "Note ajoutée",
-    description: "Client intéressé par l'offre entreprise",
-    time: "Il y a 1 jour",
-    contact: "Pierre Durand",
-    status: "noted",
-    icon: MessageSquare,
-  },
-]
+type Activity = {
+  id: number
+  type: "interaction" | "message" | "note"
+  title: string
+  description: string
+  time: string | null // ISO
+  contact: string
+  status: "scheduled" | "sent" | "noted" | "completed" | string
+}
 
-const getStatusBadge = (status: string) => {
+function iconFor(type: Activity["type"]) {
+  switch (type) {
+    case "interaction":
+      return Calendar
+    case "message":
+      return Mail
+    case "note":
+      return MessageSquare
+    default:
+      return Phone
+  }
+}
+
+function statusBadge(status: string) {
   switch (status) {
     case "completed":
       return (
@@ -73,47 +58,102 @@ const getStatusBadge = (status: string) => {
   }
 }
 
+function formatRelative(iso?: string | null) {
+  if (!iso) return "—"
+  try {
+    const d = new Date(iso)
+    // Simple format FR court
+    return d.toLocaleString("fr-FR", {
+      day: "2-digit",
+      month: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+    })
+  } catch {
+    return "—"
+  }
+}
+
 export function RecentActivities() {
+  const { toast } = useToast()
+  const [items, setItems] = useState<Activity[]>([])
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    ;(async () => {
+      try {
+        const { data } = await api.get<{ items: Activity[] }>("/activities/recent")
+        setItems(data?.items ?? [])
+      } catch (e: any) {
+        toast({
+          title: "Erreur",
+          description: e?.response?.data?.error || "Impossible de charger les activités",
+          variant: "destructive",
+        })
+      } finally {
+        setLoading(false)
+      }
+    })()
+  }, [toast])
+
   return (
     <Card className="border-0 shadow-sm bg-card/50 backdrop-blur-sm">
       <CardHeader>
         <CardTitle className="text-lg font-semibold">Activités récentes</CardTitle>
       </CardHeader>
       <CardContent>
-        <div className="space-y-4">
-          {activities.map((activity) => (
-            <div
-              key={activity.id}
-              className="flex items-start space-x-4 p-3 rounded-lg hover:bg-muted/50 transition-colors"
-            >
-              <div className="flex-shrink-0">
-                <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center">
-                  <activity.icon className="h-4 w-4 text-primary" />
+        {loading ? (
+          <div className="space-y-4 animate-pulse">
+            {Array.from({ length: 4 }).map((_, i) => (
+              <div key={i} className="h-16 rounded-lg bg-muted/60" />
+            ))}
+          </div>
+        ) : items.length === 0 ? (
+          <p className="text-sm text-muted-foreground">Aucune activité récente.</p>
+        ) : (
+          <div className="space-y-4">
+            {items.map((a) => {
+              const Icon = iconFor(a.type)
+              const initials =
+                a.contact && a.contact.trim().length > 0
+                  ? a.contact
+                      .split(" ")
+                      .map((n) => n[0] || "")
+                      .join("")
+                      .toUpperCase()
+                  : "•"
+              return (
+                <div
+                  key={`${a.type}-${a.id}`}
+                  className="flex items-start space-x-4 p-3 rounded-lg hover:bg-muted/50 transition-colors"
+                >
+                  <div className="flex-shrink-0">
+                    <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center">
+                      <Icon className="h-4 w-4 text-primary" />
+                    </div>
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center justify-between">
+                      <p className="text-sm font-medium text-foreground truncate">{a.title}</p>
+                      {statusBadge(a.status)}
+                    </div>
+                    {a.description ? (
+                      <p className="text-sm text-muted-foreground mt-1">{a.description}</p>
+                    ) : null}
+                    <div className="flex items-center mt-2 space-x-2">
+                      <Avatar className="h-5 w-5">
+                        <AvatarFallback className="text-xs">{initials}</AvatarFallback>
+                      </Avatar>
+                      <span className="text-xs text-muted-foreground">{a.contact || "—"}</span>
+                      <span className="text-xs text-muted-foreground">•</span>
+                      <span className="text-xs text-muted-foreground">{formatRelative(a.time)}</span>
+                    </div>
+                  </div>
                 </div>
-              </div>
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center justify-between">
-                  <p className="text-sm font-medium text-foreground truncate">{activity.title}</p>
-                  {getStatusBadge(activity.status)}
-                </div>
-                <p className="text-sm text-muted-foreground mt-1">{activity.description}</p>
-                <div className="flex items-center mt-2 space-x-2">
-                  <Avatar className="h-5 w-5">
-                    <AvatarFallback className="text-xs">
-                      {activity.contact
-                        .split(" ")
-                        .map((n) => n[0])
-                        .join("")}
-                    </AvatarFallback>
-                  </Avatar>
-                  <span className="text-xs text-muted-foreground">{activity.contact}</span>
-                  <span className="text-xs text-muted-foreground">•</span>
-                  <span className="text-xs text-muted-foreground">{activity.time}</span>
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
+              )
+            })}
+          </div>
+        )}
       </CardContent>
     </Card>
   )
