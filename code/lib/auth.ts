@@ -171,6 +171,22 @@ export async function register(name: string, email: string, password: string): P
   setCurrentUser(user)
   return user
 }
+export type Role = "admin" | "user";
+
+export function hasPermission(requiredRole?: Role): boolean {
+  const u = getCurrentUser();
+  // pas de rôle demandé → juste connecté
+  if (!requiredRole) return !!u;
+
+  if (requiredRole === "user") {
+    // toute personne connectée
+    return !!u;
+  }
+  if (requiredRole === "admin") {
+    return !!u && Array.isArray(u.roles) && u.roles.includes("admin");
+  }
+  return false;
+}
 
 /* --- Roles --- */
 export function hasRole(role: string): boolean {

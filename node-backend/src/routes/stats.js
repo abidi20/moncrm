@@ -2,28 +2,43 @@
 const express = require('express');
 const router = express.Router();
 const { query } = require('../db');
+// (optionnel mais conseillé)
+// const { requireAuth } = require('../middleware/auth');
 
-router.get('/stats', async (_req, res) => {
+router.get('/', async (_req, res) => {
   try {
-    const { rows: contacts } = await query('SELECT COUNT(*) AS total FROM contacts');
+    // 1) Nombre total de contacts
+    const { rows: contacts } = await query(
+      'SELECT COUNT(*) AS total FROM contacts'
+    );
+    const totalContacts = contacts[0]?.total ?? 0;
+
+    // 2) Nombre d’interactions du mois courant
+    // On utilise scheduled_at si présent, sinon created_at
     const { rows: interactions } = await query(
-      "SELECT COUNT(*) AS total FROM interactions WHERE MONTH(date) = MONTH(NOW())"
+      `SELECT COUNT(*) AS total
+         FROM interactions
+        WHERE MONTH(COALESCE(scheduled_at, created_at)) = MONTH(CURDATE())
+          AND YEAR(COALESCE(scheduled_at, created_at)) = YEAR(CURDATE())`
     );
-    const { rows: opportunites } = await query(
-      "SELECT COUNT(*) AS total FROM opportunites WHERE statut = 'active'"
-    );
+    const interactionsMois = interactions[0]?.total ?? 0;
 
-    const tauxConversion = 18.2;
+    // 3) Pour l’instant, pas de table "opportunites"
+    const opportunitesActives = 0;
 
-    res.json({
-      totalContacts: contacts[0]?.total ?? 0,
-      interactionsMois: interactions[0]?.total ?? 0,
-      opportunitesActives: opportunites[0]?.total ?? 0,
+    const tauxConversion = 18.2; // valeur fixe pour le moment
+
+    return res.json({
+      totalContacts,
+      interactionsMois,
+      opportunitesActives,
       tauxConversion,
     });
   } catch (err) {
     console.error('Erreur /api/stats :', err);
-    res.status(500).json({ error: 'Erreur lors de la récupération des statistiques' });
+    return res
+      .status(500)
+      .json({ error: 'Erreur lors de la récupération des statistiques' });
   }
 });
 

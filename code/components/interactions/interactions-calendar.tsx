@@ -1,44 +1,20 @@
 "use client"
 
+import { useState, useEffect } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { ChevronLeft, ChevronRight, Phone, Mail, Calendar, MessageSquare } from "lucide-react"
-import { useState } from "react"
+import { api } from "@/lib/api"
+import { useToast } from "@/hooks/use-toast"
 
-// Données de démonstration pour le calendrier
-const mockCalendarEvents = [
-  {
-    id: 1,
-    title: "Appel Marie Dubois",
-    type: "call",
-    date: "2024-01-15",
-    time: "14:30",
-    duration: 45,
-  },
-  {
-    id: 2,
-    title: "Réunion Sophie Laurent",
-    type: "meeting",
-    date: "2024-01-16",
-    time: "14:00",
-    duration: 60,
-  },
-  {
-    id: 3,
-    title: "Rappel Pierre Durand",
-    type: "call",
-    date: "2024-01-17",
-    time: "09:00",
-    duration: 30,
-  },
-  {
-    id: 4,
-    title: "Email de suivi",
-    type: "email",
-    date: "2024-01-18",
-    time: "10:00",
-  },
-]
+type CalendarEvent = {
+  id: number
+  title: string
+  type: string
+  date: string // "YYYY-MM-DD"
+  time: string // "HH:mm"
+  duration?: number
+}
 
 const getTypeIcon = (type: string) => {
   switch (type) {
@@ -71,34 +47,123 @@ const getTypeColor = (type: string) => {
 }
 
 export function InteractionsCalendar() {
-  const [currentDate, setCurrentDate] = useState(new Date(2024, 0, 15)) // Janvier 2024
+  const [currentDate, setCurrentDate] = useState(new Date()) // mois actuel
+  const [events, setEvents] = useState<CalendarEvent[]>([])
+  const [loading, setLoading] = useState(false)
+  const { toast } = useToast()
 
-  const daysInMonth = new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 0).getDate()
-  const firstDayOfMonth = new Date(currentDate.getFullYear(), currentDate.getMonth(), 1).getDay()
-  const adjustedFirstDay = firstDayOfMonth === 0 ? 6 : firstDayOfMonth - 1 // Ajuster pour que lundi soit 0
+  // 🔹 Charger les interactions depuis le backend
+  useEffect(() => {
+    const load = async () => {
+      setLoading(true)
+      try {
+        // adapte si ton backend renvoie { items: [...] }
+        const { data } = await api.get("/interactions", {
+          params: {
+            // optionnel: si tu as des filtres from/to côté backend
+            // from: new Date(currentDate.getFullYear(), currentDate.getMonth(), 1).toISOString(),
+            // to:   new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 0).toISOString(),
+          },
+        })
+
+        const raw = Array.isArray(data?.items) ? data.items : data
+
+        const mapped: CalendarEvent[] = (raw || []).map((it: any) => {
+          const d = it.scheduled_at ? new Date(it.scheduled_at) : null
+          const date =
+            d != null ? d.toISOString().slice(0, 10) : "" // "YYYY-MM-DD"
+          const time =
+            d != null
+              ? d.toTimeString().slice(0, 5) // "HH:mm"
+              : (it.time || "00:00")
+
+          return {
+            id: it.id,
+            title: it.title || "Interaction",
+            type: it.type || "note",
+            date,
+            time,
+            duration: it.duration_min ?? it.duration ?? undefined,
+          }
+        })
+
+        setEvents(mapped)
+      } catch (err: any) {
+        console.error("Load interactions error", err)
+        toast({
+          title: "Erreur",
+          description: "Impossible de charger les interactions du calendrier",
+          variant: "destructive",
+        })
+      } finally {
+        setLoading(false)
+      }
+    }
+
+    load()
+  }, [toast])
+
+  const daysInMonth = new Date(
+    currentDate.getFullYear(),
+    currentDate.getMonth() + 1,
+    0,
+  ).getDate()
+  const firstDayOfMonth = new Date(
+    currentDate.getFullYear(),
+    currentDate.getMonth(),
+    1,
+  ).getDay()
+  const adjustedFirstDay = firstDayOfMonth === 0 ? 6 : firstDayOfMonth - 1 // lundi = 0
 
   const days = Array.from({ length: daysInMonth }, (_, i) => i + 1)
   const emptyDays = Array.from({ length: adjustedFirstDay }, (_, i) => i)
 
   const getEventsForDay = (day: number) => {
-    const dateStr = `${currentDate.getFullYear()}-${String(currentDate.getMonth() + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`
-    return mockCalendarEvents.filter((event) => event.date === dateStr)
+    const dateStr = `${currentDate.getFullYear()}-${String(
+      currentDate.getMonth() + 1,
+    ).padStart(2, "0")}-${String(day).padStart(2, "0")}`
+    return events.filter((event) => event.date === dateStr)
   }
 
   const previousMonth = () => {
-    setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth() - 1, 1))
+    setCurrentDate(
+      new Date(currentDate.getFullYear(), currentDate.getMonth() - 1, 1),
+    )
   }
 
   const nextMonth = () => {
-    setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 1))
+    setCurrentDate(
+      new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 1),
+    )
   }
+
+  const today = new Date()
+  const isSameDay = (day: number) =>
+    day === today.getDate() &&
+    currentDate.getMonth() === today.getMonth() &&
+    currentDate.getFullYear() === today.getFullYear()
+
+  const upcoming = events
+    .filter((e) => {
+      if (!e.date) return false
+      return new Date(`${e.date}T${e.time || "00:00"}`) >= today
+    })
+    .sort(
+      (a, b) =>
+        new Date(`${a.date}T${a.time}`).getTime() -
+        new Date(`${b.date}T${b.time}`).getTime(),
+    )
+    .slice(0, 3)
 
   return (
     <Card className="border-0 shadow-sm bg-card/50 backdrop-blur-sm">
       <CardHeader>
         <div className="flex items-center justify-between">
           <CardTitle className="text-lg">
-            {currentDate.toLocaleDateString("fr-FR", { month: "long", year: "numeric" })}
+            {currentDate.toLocaleDateString("fr-FR", {
+              month: "long",
+              year: "numeric",
+            })}
           </CardTitle>
           <div className="flex items-center gap-2">
             <Button variant="outline" size="sm" onClick={previousMonth}>
@@ -111,9 +176,18 @@ export function InteractionsCalendar() {
         </div>
       </CardHeader>
       <CardContent>
+        {loading && (
+          <p className="mb-3 text-xs text-muted-foreground">
+            Chargement des interactions...
+          </p>
+        )}
+
         <div className="grid grid-cols-7 gap-2 mb-4">
           {["Lun", "Mar", "Mer", "Jeu", "Ven", "Sam", "Dim"].map((day) => (
-            <div key={day} className="text-center text-sm font-medium text-muted-foreground p-2">
+            <div
+              key={day}
+              className="text-center text-sm font-medium text-muted-foreground p-2"
+            >
               {day}
             </div>
           ))}
@@ -125,8 +199,8 @@ export function InteractionsCalendar() {
           ))}
 
           {days.map((day) => {
-            const events = getEventsForDay(day)
-            const isToday = day === 15 // Simulation pour le 15 janvier
+            const dayEvents = getEventsForDay(day)
+            const isToday = isSameDay(day)
 
             return (
               <div
@@ -135,19 +209,29 @@ export function InteractionsCalendar() {
                   isToday ? "bg-primary/10 border-primary" : "bg-background border-border"
                 } hover:bg-muted/50 transition-colors`}
               >
-                <div className={`text-sm font-medium mb-1 ${isToday ? "text-primary" : "text-foreground"}`}>{day}</div>
+                <div
+                  className={`text-sm font-medium mb-1 ${
+                    isToday ? "text-primary" : "text-foreground"
+                  }`}
+                >
+                  {day}
+                </div>
                 <div className="space-y-1">
-                  {events.slice(0, 2).map((event) => (
+                  {dayEvents.slice(0, 2).map((event) => (
                     <div
                       key={event.id}
-                      className={`text-xs p-1 rounded ${getTypeColor(event.type)} text-white flex items-center gap-1`}
+                      className={`text-xs p-1 rounded ${getTypeColor(
+                        event.type,
+                      )} text-white flex items-center gap-1`}
                     >
                       {getTypeIcon(event.type)}
                       <span className="truncate">{event.time}</span>
                     </div>
                   ))}
-                  {events.length > 2 && (
-                    <div className="text-xs text-muted-foreground">+{events.length - 2} autres</div>
+                  {dayEvents.length > 2 && (
+                    <div className="text-xs text-muted-foreground">
+                      +{dayEvents.length - 2} autres
+                    </div>
                   )}
                 </div>
               </div>
@@ -158,25 +242,34 @@ export function InteractionsCalendar() {
         <div className="mt-6 space-y-4">
           <h4 className="font-medium">Interactions à venir</h4>
           <div className="space-y-2">
-            {mockCalendarEvents
-              .filter((event) => new Date(event.date) >= new Date())
-              .slice(0, 3)
-              .map((event) => (
-                <div key={event.id} className="flex items-center gap-3 p-3 rounded-lg bg-muted/50">
-                  <div
-                    className={`w-8 h-8 rounded-lg ${getTypeColor(event.type)} flex items-center justify-center text-white`}
-                  >
-                    {getTypeIcon(event.type)}
-                  </div>
-                  <div className="flex-1">
-                    <p className="text-sm font-medium">{event.title}</p>
-                    <p className="text-xs text-muted-foreground">
-                      {new Date(event.date).toLocaleDateString("fr-FR")} à {event.time}
-                      {event.duration && ` (${event.duration} min)`}
-                    </p>
-                  </div>
+            {upcoming.map((event) => (
+              <div
+                key={event.id}
+                className="flex items-center gap-3 p-3 rounded-lg bg-muted/50"
+              >
+                <div
+                  className={`w-8 h-8 rounded-lg ${getTypeColor(
+                    event.type,
+                  )} flex items-center justify-center text-white`}
+                >
+                  {getTypeIcon(event.type)}
                 </div>
-              ))}
+                <div className="flex-1">
+                  <p className="text-sm font-medium">{event.title}</p>
+                  <p className="text-xs text-muted-foreground">
+                    {event.date &&
+                      new Date(event.date).toLocaleDateString("fr-FR")}{" "}
+                    à {event.time}
+                    {event.duration && ` (${event.duration} min)`}
+                  </p>
+                </div>
+              </div>
+            ))}
+            {upcoming.length === 0 && !loading && (
+              <p className="text-xs text-muted-foreground">
+                Aucune interaction à venir.
+              </p>
+            )}
           </div>
         </div>
       </CardContent>

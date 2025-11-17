@@ -2,7 +2,7 @@
 
 import type React from "react"
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -11,6 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { useToast } from "@/hooks/use-toast"
 import { Save, ArrowLeft, Phone, Mail, Calendar, MessageSquare } from "lucide-react"
 import Link from "next/link"
+import { api } from "@/lib/api" // 👈 axios configuré vers http://localhost:5000/api
 
 interface InteractionFormProps {
   type: string
@@ -24,15 +25,18 @@ const interactionTypes = [
   { value: "note", label: "Note", icon: MessageSquare },
 ]
 
-const mockContacts = [
-  { id: 1, name: "Marie Dubois", company: "TechCorp" },
-  { id: 2, name: "Jean Martin", company: "InnovateLtd" },
-  { id: 3, name: "Sophie Laurent", company: "StartupXYZ" },
-  { id: 4, name: "Pierre Durand", company: "GlobalTech" },
-]
+// Type contact minimal pour la liste
+interface ContactOption {
+  id: number
+  first_name?: string
+  last_name?: string
+  company?: string
+}
 
 export function InteractionForm({ type, interactionId }: InteractionFormProps) {
   const [isLoading, setIsLoading] = useState(false)
+  const [isLoadingInteraction, setIsLoadingInteraction] = useState(!!interactionId)
+  const [contacts, setContacts] = useState<ContactOption[]>([])
   const { toast } = useToast()
 
   const [formData, setFormData] = useState({
@@ -40,50 +44,151 @@ export function InteractionForm({ type, interactionId }: InteractionFormProps) {
     title: "",
     description: "",
     contactId: "",
-    date: new Date().toISOString().slice(0, 16), // Format datetime-local
+    date: new Date().toISOString().slice(0, 16), // datetime-local
     duration: "",
     priority: "medium",
     status: "scheduled",
     notes: "",
   })
 
+  // 🔹 Charger les contacts depuis /api/contacts
+  useEffect(() => {
+    const loadContacts = async () => {
+      try {
+        const { data } = await api.get("/contacts", {
+          params: { page: 1, pageSize: 1000 },
+        })
+        const items: ContactOption[] = data?.items ?? data ?? []
+        setContacts(items)
+      } catch (err: any) {
+        console.error("Load contacts error", err)
+        toast({
+          title: "Erreur",
+          description: "Impossible de charger la liste des contacts",
+          variant: "destructive",
+        })
+      }
+    }
+
+    loadContacts()
+  }, [toast])
+
+  // 🔹 Si on édite, charger l’interaction existante
+  useEffect(() => {
+    if (!interactionId) return
+
+    const loadInteraction = async () => {
+      try {
+        const { data } = await api.get(`/interactions/${interactionId}`)
+        // ⚠️ adapte les noms de colonnes si nécessaire
+        setFormData({
+          type: data.type || type,
+          title: data.title || "",
+          description: data.description || "",
+          contactId: data.contact_id ? String(data.contact_id) : "",
+          date: data.scheduled_at
+            ? new Date(data.scheduled_at).toISOString().slice(0, 16)
+            : new Date().toISOString().slice(0, 16),
+          duration: data.duration_min ? String(data.duration_min) : "",
+          priority: data.priority || "medium",
+          status: data.status || "scheduled",
+          notes: data.notes || "",
+        })
+      } catch (err: any) {
+        console.error("Load interaction error", err)
+        toast({
+          title: "Erreur",
+          description: "Impossible de charger l'interaction",
+          variant: "destructive",
+        })
+      } finally {
+        setIsLoadingInteraction(false)
+      }
+    }
+
+    loadInteraction()
+  }, [interactionId, type, toast])
+
+  const handleChange = (field: string, value: string) => {
+    setFormData((prev) => ({ ...prev, [field]: value }))
+  }
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setIsLoading(true)
 
-    setTimeout(() => {
+    try {
+      // ✅ construire le payload attendu par le backend (routes/interactions.js)
+      const payload = {
+        type: formData.type,
+        title: formData.title,
+        description: formData.description || null,
+        contact_id: formData.contactId ? Number(formData.contactId) : null,
+        scheduled_at: formData.date ? new Date(formData.date).toISOString() : null,
+        duration_min: formData.duration ? Number(formData.duration) : null,
+        priority: formData.priority,
+        status: formData.status,
+        notes: formData.notes || null,
+      }
+
+      if (!payload.contact_id) {
+        toast({
+          title: "Erreur",
+          description: "Veuillez sélectionner un contact",
+          variant: "destructive",
+        })
+        setIsLoading(false)
+        return
+      }
+
+      if (interactionId) {
+        await api.put(`/interactions/${interactionId}`, payload)
+      } else {
+        await api.post("/interactions", payload)
+      }
+
       toast({
         title: interactionId ? "Interaction modifiée" : "Interaction créée",
         description: interactionId
           ? "L'interaction a été mise à jour avec succès."
           : "La nouvelle interaction a été enregistrée.",
       })
-      setIsLoading(false)
-      window.location.href = "/interactions"
-    }, 1000)
-  }
 
-  const handleChange = (field: string, value: string) => {
-    setFormData((prev) => ({ ...prev, [field]: value }))
+      window.location.href = "/interactions"
+    } catch (err: any) {
+      console.error("Save interaction error", err)
+      const msg = err?.response?.data?.error || "Erreur lors de l'enregistrement"
+      toast({
+        title: "Erreur",
+        description: msg,
+        variant: "destructive",
+      })
+    } finally {
+      setIsLoading(false)
+    }
   }
 
   const selectedType = interactionTypes.find((t) => t.value === formData.type)
+
+  if (isLoadingInteraction) {
+    return <p className="text-sm text-muted-foreground">Chargement de l&apos;interaction...</p>
+  }
 
   return (
     <form onSubmit={handleSubmit} className="space-y-6">
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div className="space-y-2">
-          <Label htmlFor="type">Type d'interaction</Label>
+          <Label htmlFor="type">Type d&apos;interaction</Label>
           <Select value={formData.type} onValueChange={(value) => handleChange("type", value)}>
             <SelectTrigger>
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              {interactionTypes.map((type) => (
-                <SelectItem key={type.value} value={type.value}>
+              {interactionTypes.map((t) => (
+                <SelectItem key={t.value} value={t.value}>
                   <div className="flex items-center gap-2">
-                    <type.icon className="h-4 w-4" />
-                    {type.label}
+                    <t.icon className="h-4 w-4" />
+                    {t.label}
                   </div>
                 </SelectItem>
               ))}
@@ -93,14 +198,18 @@ export function InteractionForm({ type, interactionId }: InteractionFormProps) {
 
         <div className="space-y-2">
           <Label htmlFor="contactId">Contact *</Label>
-          <Select value={formData.contactId} onValueChange={(value) => handleChange("contactId", value)}>
+          <Select
+            value={formData.contactId}
+            onValueChange={(value) => handleChange("contactId", value)}
+          >
             <SelectTrigger>
               <SelectValue placeholder="Sélectionner un contact" />
             </SelectTrigger>
             <SelectContent>
-              {mockContacts.map((contact) => (
-                <SelectItem key={contact.id} value={contact.id.toString()}>
-                  {contact.name} - {contact.company}
+              {contacts.map((c) => (
+                <SelectItem key={c.id} value={String(c.id)}>
+                  {`${c.first_name || ""} ${c.last_name || ""}`.trim() || "Sans nom"}{" "}
+                  {c.company ? `- ${c.company}` : ""}
                 </SelectItem>
               ))}
             </SelectContent>
@@ -114,7 +223,7 @@ export function InteractionForm({ type, interactionId }: InteractionFormProps) {
           id="title"
           value={formData.title}
           onChange={(e) => handleChange("title", e.target.value)}
-          placeholder={`${selectedType?.label} avec...`}
+          placeholder={`${selectedType?.label ?? "Interaction"} avec...`}
           required
         />
       </div>
@@ -155,7 +264,10 @@ export function InteractionForm({ type, interactionId }: InteractionFormProps) {
 
         <div className="space-y-2">
           <Label htmlFor="priority">Priorité</Label>
-          <Select value={formData.priority} onValueChange={(value) => handleChange("priority", value)}>
+          <Select
+            value={formData.priority}
+            onValueChange={(value) => handleChange("priority", value)}
+          >
             <SelectTrigger>
               <SelectValue />
             </SelectTrigger>
@@ -200,7 +312,7 @@ export function InteractionForm({ type, interactionId }: InteractionFormProps) {
           ) : (
             <Save className="h-4 w-4" />
           )}
-          {interactionId ? "Modifier" : "Créer"} l'interaction
+          {interactionId ? "Modifier" : "Créer"} l&apos;interaction
         </Button>
 
         <Button type="button" variant="outline" asChild>

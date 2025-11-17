@@ -1,5 +1,10 @@
+'use client'
+
 import { DashboardLayout } from "@/components/layout/dashboard-layout"
 import { ProtectedRoute } from "@/components/auth/protected-route"
+import { ReportsStats } from "@/components/reports/reports-stats"
+import { ReportsCharts } from "@/components/reports/reports-charts"
+import { ReportsTable } from "@/components/reports/reports-table"
 
 export default function ReportsPage() {
   return (
@@ -14,10 +19,14 @@ export default function ReportsPage() {
             <p className="text-muted-foreground">Analysez vos performances commerciales</p>
           </div>
 
-          <div className="bg-card/50 backdrop-blur-sm rounded-lg border p-8 text-center">
-            <h2 className="text-xl font-semibold mb-2">Module en développement</h2>
-            <p className="text-muted-foreground">Les rapports seront disponibles prochainement.</p>
-          </div>
+          {/* Stats Cards */}
+          <ReportsStats />
+
+          {/* Charts Section */}
+          <ReportsCharts />
+
+          {/* Detailed Table */}
+          <ReportsTable />
         </div>
       </ProtectedRoute>
     </DashboardLayout>

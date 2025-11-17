@@ -1,114 +1,391 @@
 // src/routes/interactions.js
 const express = require('express');
 const router = express.Router();
-const { query } = require('../db');
 const rateLimit = require('express-rate-limit');
+const { query } = require('../db');
+const { requireAuth } = require('../middleware/auth');
 
-const createLimiter = rateLimit({
+// Limiteur pour éviter le spam de création / modification
+const writeLimiter = rateLimit({
   windowMs: 60 * 1000,
-  max: 10,
+  max: 20,
   standardHeaders: true,
   legacyHeaders: false,
-  message: { error: 'Too many interactions created, try again later.' },
+  message: { error: 'Too many interaction actions, try again later.' },
 });
 
-const sanitizeTitle = (title) =>
-  typeof title === 'string' ? title.trim().slice(0, 255).replace(/<[^>]*>/g, '') : null;
+// --------- Helpers / validation ---------
 
-router.post('/', createLimiter, async (req, res) => {
-  if (!req.user?.sub) return res.status(401).json({ error: 'Unauthorized' });
+const cleanStr = (s, max = 255) =>
+  typeof s === 'string' ? s.trim().slice(0, max) : null;
 
-  let { title, champ_id } = req.body ?? {};
-  title = sanitizeTitle(title);
-  if (!title) return res.status(400).json({ error: 'title is required' });
+const sanitizeText = (s, max = 5000) =>
+  typeof s === 'string'
+    ? s.trim().replace(/<[^>]*>/g, '').slice(0, max)
+    : null;
 
-  if (champ_id !== null && champ_id !== undefined) {
-    champ_id = parseInt(champ_id, 10);
-    if (isNaN(champ_id)) return res.status(400).json({ error: 'champ_id must be a number' });
+const parseIntOrNull = (v) => {
+  if (v === null || v === undefined || v === '') return null;
+  const n = parseInt(v, 10);
+  return Number.isNaN(n) ? null : n;
+};
+
+const parseDateTimeOrNull = (v) => {
+  if (!v) return null;
+  const d = new Date(v);
+  return Number.isNaN(d.getTime()) ? null : d.toISOString().slice(0, 19).replace('T', ' ');
+};
+
+const allowedTypes = ['call', 'email', 'meeting', 'note'];
+const allowedPriorities = ['low', 'medium', 'high'];
+const allowedStatus = ['scheduled', 'completed', 'cancelled', 'sent'];
+
+const validateInteraction = (p) => {
+  if (!p.title) return 'Title is required';
+  if (!p.type || !allowedTypes.includes(p.type)) return 'Invalid type';
+  if (!p.contact_id) return 'Contact is required';
+  if (p.priority && !allowedPriorities.includes(p.priority)) return 'Invalid priority';
+  if (p.status && !allowedStatus.includes(p.status)) return 'Invalid status';
+
+  if (p.duration_min !== null && p.duration_min !== undefined) {
+    if (Number.isNaN(p.duration_min) || p.duration_min < 0) {
+      return 'duration_min must be a positive number';
+    }
   }
+
+  return null;
+};
+
+// --------- CREATE  (POST /api/interactions) ---------
+
+router.post('/', requireAuth, writeLimiter, async (req, res) => {
+  const userId = req.user?.sub;
+  if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+
+  const body = req.body ?? {};
+
+  const payload = {
+    title: cleanStr(body.title, 200),
+    type: cleanStr(body.type, 20) || 'call',
+    description: sanitizeText(body.description),
+    contact_id: parseIntOrNull(body.contact_id),
+    scheduled_at: parseDateTimeOrNull(body.scheduled_at),
+    duration_min: parseIntOrNull(body.duration_min),
+    priority: cleanStr(body.priority, 20) || 'medium',
+    status: cleanStr(body.status, 20) || 'scheduled',
+    notes: sanitizeText(body.notes),
+    champ_id: parseIntOrNull(body.champ_id),
+  };
+
+  const err = validateInteraction(payload);
+  if (err) return res.status(400).json({ error: err });
 
   try {
     const { rows: ins } = await query(
-      `INSERT INTO interactions (title, champ_id, created_by) VALUES (?, ?, ?)`,
-      [title, champ_id ?? null, req.user.sub]
+      `INSERT INTO interactions
+       (title, type, description, contact_id, scheduled_at, duration_min,
+        priority, status, notes, champ_id, created_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        payload.title,
+        payload.type,
+        payload.description,
+        payload.contact_id,
+        payload.scheduled_at,
+        payload.duration_min,
+        payload.priority,
+        payload.status,
+        payload.notes,
+        payload.champ_id,
+        userId,
+      ]
     );
-    const interactionId = ins?.insertId;
-    if (!interactionId) return res.status(500).json({ error: 'Failed to get inserted ID' });
 
-    const { rows } = await query(`SELECT * FROM interactions WHERE id = ? LIMIT 1`, [interactionId]);
-    const interaction = rows[0];
-    if (!interaction) return res.status(500).json({ error: 'Failed to retrieve created interaction' });
+    const newId = ins.insertId;
+    if (!newId) return res.status(500).json({ error: 'Failed to create interaction' });
 
-    await query(
-      `INSERT IGNORE INTO interaction_participants (interaction_id, user_id, role_in_interaction) VALUES (?, ?, 'initiator')`,
-      [interactionId, req.user.sub]
+    const { rows } = await query(
+      `SELECT i.*, c.first_name, c.last_name, c.company
+         FROM interactions i
+         LEFT JOIN contacts c ON c.id = i.contact_id
+        WHERE i.id = ? LIMIT 1`,
+      [newId]
     );
 
-    res.status(201).json(interaction);
+    return res.status(201).json(rows[0]);
   } catch (e) {
     console.error('Create interaction error:', e);
-    res.status(500).json({ error: 'Internal server error' });
+    return res.status(500).json({ error: 'Internal server error' });
   }
 });
 
-router.get('/', async (req, res) => {
-  const { participantId } = req.query;
+// --------- LIST  (GET /api/interactions) ---------
+
+router.get('/', requireAuth, async (req, res) => {
   try {
-    if (participantId !== undefined) {
-      const userId = parseInt(participantId, 10);
-      if (isNaN(userId)) return res.status(400).json({ error: 'participantId must be a number' });
-      const { rows } = await query(
-        `SELECT DISTINCT i.* FROM interactions i
-         JOIN interaction_participants ip ON ip.interaction_id = i.id
-         WHERE ip.user_id = ? ORDER BY i.created_at DESC LIMIT 200`,
-        [userId]
-      );
-      return res.json(rows || []);
+    const q = (req.query.q || '').trim();
+    const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
+    const pageSize = Math.min(Math.max(parseInt(req.query.pageSize, 10) || 20, 1), 100);
+    const offset = (page - 1) * pageSize;
+
+    let where = '';
+    const params = [];
+
+    if (q) {
+      where = `
+        WHERE (i.title LIKE ?
+           OR c.first_name LIKE ?
+           OR c.last_name LIKE ?
+           OR c.company LIKE ?)
+      `;
+      const like = `%${q}%`;
+      params.push(like, like, like, like);
     }
-    const { rows } = await query(`SELECT * FROM interactions ORDER BY created_at DESC LIMIT 200`);
-    res.json(rows || []);
+
+    // ⚠ LIMIT / OFFSET sans "?" pour éviter ER_WRONG_ARGUMENTS
+    const listSql = `
+      SELECT
+        i.*,
+        c.first_name,
+        c.last_name,
+        c.company
+      FROM interactions i
+      LEFT JOIN contacts c ON c.id = i.contact_id
+      ${where}
+      ORDER BY (i.scheduled_at IS NULL), i.scheduled_at DESC, i.created_at DESC
+      LIMIT ${pageSize} OFFSET ${offset}
+    `;
+
+    const countSql = `
+      SELECT COUNT(*) AS total
+      FROM interactions i
+      LEFT JOIN contacts c ON c.id = i.contact_id
+      ${where}
+    `;
+
+    const { rows: items } = await query(listSql, params);
+    const { rows: countRows } = await query(countSql, params);
+
+    return res.json({
+      page,
+      pageSize,
+      total: countRows[0]?.total || 0,
+      items: items || [],
+    });
   } catch (e) {
     console.error('List interactions error:', e);
-    res.status(500).json({ error: 'Internal server error' });
+    return res.status(500).json({ error: 'Internal server error' });
   }
 });
 
-router.get('/:id', async (req, res) => {
+// --------- DETAIL  (GET /api/interactions/:id) ---------
+
+router.get('/:id', requireAuth, async (req, res) => {
   const id = parseInt(req.params.id, 10);
-  if (isNaN(id)) return res.status(400).json({ error: 'Invalid ID' });
+  if (Number.isNaN(id)) return res.status(400).json({ error: 'Invalid ID' });
 
   try {
-    const { rows } = await query(`SELECT * FROM interactions WHERE id = ? LIMIT 1`, [id]);
+    const { rows } = await query(
+      `SELECT
+         i.*,
+         c.first_name,
+         c.last_name,
+         c.company
+       FROM interactions i
+       LEFT JOIN contacts c ON c.id = i.contact_id
+       WHERE i.id = ? LIMIT 1`,
+      [id]
+    );
     if (!rows[0]) return res.status(404).json({ error: 'Not found' });
-    res.json(rows[0]);
+    return res.json(rows[0]);
   } catch (e) {
     console.error('Get interaction error:', e);
-    res.status(500).json({ error: 'Internal server error' });
+    return res.status(500).json({ error: 'Internal server error' });
   }
 });
 
-router.post('/:id/participants', createLimiter, async (req, res) => {
-  const interactionId = parseInt(req.params.id, 10);
-  if (isNaN(interactionId)) return res.status(400).json({ error: 'Invalid interaction ID' });
+// --------- UPDATE  (PUT /api/interactions/:id) ---------
 
-  let { user_id, role_in_interaction } = req.body ?? {};
-  if (user_id === undefined || user_id === null) return res.status(400).json({ error: 'user_id required' });
+router.put('/:id', requireAuth, writeLimiter, async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (Number.isNaN(id)) return res.status(400).json({ error: 'Invalid ID' });
 
-  user_id = parseInt(user_id, 10);
-  if (isNaN(user_id)) return res.status(400).json({ error: 'user_id must be a number' });
+  const body = req.body ?? {};
 
-  const { rows: exist } = await query(`SELECT 1 FROM interactions WHERE id = ? LIMIT 1`, [interactionId]);
-  if (!exist[0]) return res.status(404).json({ error: 'Interaction not found' });
+  const payload = {
+    title: cleanStr(body.title, 200),
+    type: cleanStr(body.type, 20) || 'call',
+    description: sanitizeText(body.description),
+    contact_id: parseIntOrNull(body.contact_id),
+    scheduled_at: parseDateTimeOrNull(body.scheduled_at),
+    duration_min: parseIntOrNull(body.duration_min),
+    priority: cleanStr(body.priority, 20) || 'medium',
+    status: cleanStr(body.status, 20) || 'scheduled',
+    notes: sanitizeText(body.notes),
+    champ_id: parseIntOrNull(body.champ_id),
+  };
+
+  const err = validateInteraction(payload);
+  if (err) return res.status(400).json({ error: err });
 
   try {
-    await query(
-      `INSERT IGNORE INTO interaction_participants (interaction_id, user_id, role_in_interaction) VALUES (?, ?, ?)`,
-      [interactionId, user_id, role_in_interaction || null]
+    const { rows: exist } = await query(
+      `SELECT id FROM interactions WHERE id = ? LIMIT 1`,
+      [id]
     );
-    res.status(201).json({ ok: true });
+    if (!exist[0]) return res.status(404).json({ error: 'Interaction not found' });
+
+    await query(
+      `UPDATE interactions SET
+         title = ?,
+         type = ?,
+         description = ?,
+         contact_id = ?,
+         scheduled_at = ?,
+         duration_min = ?,
+         priority = ?,
+         status = ?,
+         notes = ?,
+         champ_id = ?
+       WHERE id = ?`,
+      [
+        payload.title,
+        payload.type,
+        payload.description,
+        payload.contact_id,
+        payload.scheduled_at,
+        payload.duration_min,
+        payload.priority,
+        payload.status,
+        payload.notes,
+        payload.champ_id,
+        id,
+      ]
+    );
+
+    const { rows } = await query(
+      `SELECT
+         i.*,
+         c.first_name,
+         c.last_name,
+         c.company
+       FROM interactions i
+       LEFT JOIN contacts c ON c.id = i.contact_id
+       WHERE i.id = ? LIMIT 1`,
+      [id]
+    );
+
+    return res.json(rows[0]);
+  } catch (e) {
+    console.error('Update interaction error:', e);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// --------- PARTICIPANTS (facultatif)  ---------
+
+router.post('/:id/participants', requireAuth, writeLimiter, async (req, res) => {
+  const interactionId = parseInt(req.params.id, 10);
+  if (Number.isNaN(interactionId)) return res.status(400).json({ error: 'Invalid interaction ID' });
+
+  let { user_id, role_in_interaction } = req.body ?? {};
+  const uid = parseIntOrNull(user_id);
+  if (!uid) return res.status(400).json({ error: 'user_id required' });
+
+  try {
+    const { rows: exist } = await query(
+      `SELECT id FROM interactions WHERE id = ? LIMIT 1`,
+      [interactionId]
+    );
+    if (!exist[0]) return res.status(404).json({ error: 'Interaction not found' });
+
+    await query(
+      `INSERT IGNORE INTO interaction_participants
+         (interaction_id, user_id, role_in_interaction)
+       VALUES (?, ?, ?)`,
+      [interactionId, uid, cleanStr(role_in_interaction, 100)]
+    );
+
+    return res.status(201).json({ ok: true });
   } catch (e) {
     console.error('Add participant error:', e);
-    res.status(500).json({ error: 'Internal server error' });
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+// --------- DELETE  (DELETE /api/interactions/:id) ---------
+
+router.delete('/:id', requireAuth, writeLimiter, async (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  if (Number.isNaN(id)) {
+    return res.status(400).json({ error: 'Invalid ID' });
+  }
+
+  try {
+    // Vérifier que l'interaction existe
+    const { rows: exist } = await query(
+      'SELECT id, created_by FROM interactions WHERE id = ? LIMIT 1',
+      [id]
+    );
+    if (!exist[0]) {
+      return res.status(404).json({ error: 'Not found' });
+    }
+
+    // (Optionnel) sécurité : seul le créateur peut supprimer
+    if (exist[0].created_by && exist[0].created_by !== req.user.sub) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
+
+    // Supprimer les participants liés (si tu utilises cette table)
+    await query(
+      'DELETE FROM interaction_participants WHERE interaction_id = ?',
+      [id]
+    );
+
+    // Supprimer l’interaction
+    await query('DELETE FROM interactions WHERE id = ?', [id]);
+
+    return res.json({ ok: true });
+  } catch (e) {
+    console.error('Delete interaction error:', e);
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+});
+// GET /api/contacts/:id/interactions
+// Renvoie les interactions liées à CE contact
+router.get('/:id/interactions', requireAuth, async (req, res) => {
+  const contactId = parseInt(req.params.id, 10);
+  if (Number.isNaN(contactId)) {
+    return res.status(400).json({ error: 'Invalid ID' });
+  }
+
+  // on peut passer ?limit=5 dans l’URL, sinon 5 par défaut
+  const limit = Math.min(parseInt(req.query.limit, 10) || 5, 50);
+
+  try {
+    const { rows } = await query(
+      `SELECT
+         id,
+         title,
+         type,
+         description,
+         scheduled_at,
+         duration_min,
+         status,
+         priority,
+         notes
+       FROM interactions
+       WHERE contact_id = ?
+       ORDER BY COALESCE(scheduled_at, created_at) DESC
+       LIMIT ?`,
+      [contactId, limit]
+    );
+
+    return res.json(rows || []);
+  } catch (e) {
+    console.error('Contact interactions error:', e);
+    return res
+      .status(500)
+      .json({ error: 'Internal server error' });
   }
 });
 
